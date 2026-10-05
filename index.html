@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<title>무음 카메라</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app">
+  <video id="preview" autoplay playsinline muted></video>
+  <div id="flash" aria-hidden="true"></div>
+  <div id="message" hidden></div>
+
+  <header class="top">
+    <button id="flipBtn" aria-label="카메라 전환">🔄</button>
+    <span class="badge">🔇 무음</span>
+    <button id="timerBtn" aria-label="타이머">⏱ <span id="timerLabel">끔</span></button>
+  </header>
+
+  <footer class="bottom">
+    <button id="thumb" aria-label="갤러리 열기"><img id="thumbImg" alt=""></button>
+    <button id="shutter" aria-label="촬영"><span></span></button>
+    <button id="galleryBtn" aria-label="사진 목록">🖼</button>
+  </footer>
+  <div id="countdown" hidden></div>
+</main>
+
+<section id="gallery" hidden>
+  <div class="gallery-head">
+    <button id="closeGallery">← 카메라</button>
+    <button id="clearAll">전체 삭제</button>
+  </div>
+  <div id="grid"></div>
+  <p id="empty">찍은 사진이 없습니다.</p>
+</section>
+
+<div id="viewer" hidden>
+  <img id="viewerImg" alt="">
+  <div class="viewer-bar">
+    <button id="viewerClose">닫기</button>
+    <a id="viewerSave" download="photo.jpg">저장</a>
+    <button id="viewerDelete">삭제</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
