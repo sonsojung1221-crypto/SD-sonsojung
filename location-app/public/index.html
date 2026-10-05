@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>내 위치 남기기</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>📍 내 위치 남기기</h1>
+
+  <section id="login">
+    <form id="nickForm">
+      <label for="nick">닉네임</label>
+      <input id="nick" maxlength="20" placeholder="닉네임을 입력하세요" required autocomplete="off">
+      <button>입장</button>
+    </form>
+  </section>
+
+  <section id="main" hidden>
+    <p><strong id="who"></strong> 님, 환영합니다. <button id="logout" class="link">닉네임 변경</button></p>
+    <button id="saveBtn">현재 위치 저장</button>
+    <p id="status" role="status"></p>
+
+    <h2>저장된 위치</h2>
+    <ul id="list"></ul>
+    <p id="empty">아직 저장된 위치가 없습니다.</p>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
