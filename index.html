@@ -17,16 +17,19 @@
 
   <header class="top">
     <button id="flipBtn" aria-label="카메라 전환">🔄</button>
-    <span class="badge">🔇 무음</span>
+    <span class="badge" id="badge">🔇 무음</span>
+    <button id="stealthBtn" aria-label="스텔스 모드">🌑</button>
     <button id="timerBtn" aria-label="타이머">⏱ <span id="timerLabel">끔</span></button>
   </header>
 
   <footer class="bottom">
     <button id="thumb" aria-label="갤러리 열기"><img id="thumbImg" alt=""></button>
     <button id="shutter" aria-label="촬영"><span></span></button>
+    <button id="recBtn" aria-label="영상 촬영"><span></span></button>
     <button id="galleryBtn" aria-label="사진 목록">🖼</button>
   </footer>
   <div id="countdown" hidden></div>
+  <div id="stealth" hidden></div>
 </main>
 
 <section id="gallery" hidden>
@@ -40,6 +43,7 @@
 
 <div id="viewer" hidden>
   <img id="viewerImg" alt="">
+  <video id="viewerVideo" controls playsinline></video>
   <div class="viewer-bar">
     <button id="viewerClose">닫기</button>
     <a id="viewerSave" download="photo.jpg">저장</a>

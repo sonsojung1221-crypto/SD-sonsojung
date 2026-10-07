@@ -30,3 +30,14 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .viewer-bar{display:flex;justify-content:space-around;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
 .viewer-bar a{color:#fff;text-decoration:none}
 [hidden]{display:none!important}
+
+#recBtn{width:52px;height:52px;border-radius:50%;border:3px solid #fff;display:grid;place-items:center}
+#recBtn span{width:26px;height:26px;border-radius:50%;background:#e53935;transition:all .15s}
+#recBtn.on span{border-radius:6px;width:20px;height:20px}
+.badge.rec{background:#e53935}
+#stealth{position:fixed;inset:0;background:#000;z-index:30;touch-action:none;user-select:none;-webkit-user-select:none}
+#viewer video{flex:1;min-height:0;width:100%;background:#000}
+#grid .item{position:relative}
+#grid video,#grid img{width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:pointer;background:#222}
+#grid .item::after{content:"▶";position:absolute;right:6px;bottom:4px;font-size:14px;text-shadow:0 1px 4px #000;display:none}
+#grid .item.vid::after{display:block}
