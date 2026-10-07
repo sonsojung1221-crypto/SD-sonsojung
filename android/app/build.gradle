@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.silentcam.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.silentcam.app"
+        minSdk 29
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main { assets.srcDirs += "$buildDir/webassets" }
+    }
+}
+
+// 저장소 루트의 웹 앱 파일을 APK assets 로 복사 (웹과 앱이 같은 코드를 씁니다)
+tasks.register('copyWeb', Copy) {
+    from(rootProject.file('..')) {
+        include 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'sw.js', 'icons/**'
+    }
+    into "$buildDir/webassets"
+}
+preBuild.dependsOn 'copyWeb'
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

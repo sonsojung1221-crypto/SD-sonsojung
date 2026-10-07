@@ -4,6 +4,7 @@ const preview = $('preview');
 let stream = null, facing = 'environment', timer = 0, busy = false;
 let recorder = null, recChunks = [], recStart = 0, recTick = null, micStream = null;
 let wakeLock = null;
+const native = window.AndroidBridge; // 안드로이드 앱(APK)에서만 존재
 
 // ---------- 저장소 (IndexedDB) ----------
 const dbReady = new Promise((res, rej) => {
@@ -21,7 +22,27 @@ const tx = async (mode, fn) => {
     t.onerror = () => rej(t.error);
   });
 };
-const addItem = (blob, type) => tx('readwrite', s => s.add({ blob, type, time: Date.now() }));
+const addItem = (blob, type) => {
+  if (native) saveNative(blob, type).catch(() => {});
+  return tx('readwrite', s => s.add({ blob, type, time: Date.now() }));
+};
+// 앱에서는 촬영물을 기기 갤러리에도 자동 저장
+async function saveNative(blob, type) {
+  const ext = type === 'photo' ? 'jpg' : ((blob.type || '').includes('mp4') ? 'mp4' : 'webm');
+  const name = 'silent-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + ext;
+  const id = native.saveBegin(name, blob.type || 'image/jpeg', type);
+  if (!id) return;
+  const CH = 768 * 1024; // 3의 배수 → base64 조각을 독립적으로 디코드 가능
+  for (let o = 0; o < blob.size; o += CH) {
+    const b64 = await new Promise(r => {
+      const fr = new FileReader();
+      fr.onload = () => r(fr.result.split(',')[1]);
+      fr.readAsDataURL(blob.slice(o, o + CH));
+    });
+    native.saveChunk(id, b64);
+  }
+  native.saveEnd(id);
+}
 const allItems = () => tx('readonly', s => s.getAll()).then(a => a.reverse());
 const delItem = id => tx('readwrite', s => s.delete(id));
 const clearItems = () => tx('readwrite', s => s.clear());
@@ -116,11 +137,13 @@ async function keepAwake() {
 }
 function enterStealth() {
   $('stealth').hidden = false;
+  if (native) native.setStealth(true);
   keepAwake();
   if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
 }
 function exitStealth() {
   $('stealth').hidden = true;
+  if (native) native.setStealth(false);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
 // 위쪽 절반 터치: 사진 / 아래쪽 절반 터치: 영상 시작·종료 / 1.5초 길게 누르기: 스텔스 해제
@@ -194,6 +217,12 @@ $('viewerDelete').onclick = async () => {
 $('clearAll').onclick = async () => {
   if (confirm('모두 삭제할까요?')) { await clearItems(); openGallery(); }
 };
+// 앱(APK)에서 볼륨 버튼이 눌리면 네이티브가 호출: 업=사진, 다운=영상
+window.nativeKey = k => {
+  if (!$('gallery').hidden || !$('viewer').hidden) return;
+  k === 'up' ? shoot() : toggleRecord();
+};
+if (native) $('viewerSave').hidden = true; // 앱에서는 자동으로 갤러리에 저장됨
 // 볼륨 업: 사진 / 볼륨 다운: 영상 (※ 브라우저가 볼륨 키를 전달하는 기기에서만 동작)
 document.addEventListener('keydown', e => {
   const camera = $('gallery').hidden && $('viewer').hidden;

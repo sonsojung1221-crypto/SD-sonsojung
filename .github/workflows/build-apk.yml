@@ -1,0 +1,37 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths: ['android/**', 'index.html', 'style.css', 'app.js', 'sw.js', 'manifest.webmanifest', 'icons/**', '.github/workflows/build-apk.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Build debug APK
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk SilentCamera.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: SilentCamera-apk, path: SilentCamera.apk }
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: 무음 카메라 APK (최신)
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          files: SilentCamera.apk
+          body: 폰에서 SilentCamera.apk 를 받아 설치하세요.

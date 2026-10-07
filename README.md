@@ -21,3 +21,8 @@
     python3 -m http.server 8000   # http://localhost:8000
 
 > 참고: 일부 국가에서는 몰래 촬영을 금지합니다. 타인의 동의 없이 촬영하지 마세요.
+
+## 안드로이드 APK
+`android/` 에 WebView 기반 앱이 있고, GitHub Actions(`Build APK`)가 APK 를 자동으로 빌드해
+저장소 **Releases → 무음 카메라 APK (최신)** 에 올립니다. 앱에서는 볼륨 업=사진, 볼륨 다운=영상 시작/종료가 되고,
+촬영물은 갤러리(Pictures/SilentCamera, Movies/SilentCamera)에 자동 저장됩니다.
