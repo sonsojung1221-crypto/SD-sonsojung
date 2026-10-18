@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const preview = $('preview');
 let stream = null, facing = 'environment', timer = 0, busy = false;
-let recorder = null, recChunks = [], recStart = 0, recTick = null, micStream = null;
+let stabilizer = null, recorder = null, recChunks = [], recStart = 0, recTick = null, micStream = null;
 let wakeLock = null;
 const native = window.AndroidBridge; // 안드로이드 앱(APK)에서만 존재
 
@@ -12,6 +12,7 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch (e) {} }
 };
 let hideRec = store.get('hideRec', false);   // 촬영 중 표시(빨간 시간/버튼 변화) 숨기기
+let stab = store.get('stab', true);          // 영상 손떨림 보정
 let autoSave = store.get('autoSave', true);  // 촬영 즉시 기기에 파일로 저장(다운로드)
 
 // ---------- 저장소 (IndexedDB) ----------
@@ -110,22 +111,92 @@ async function shoot() {
   capture();
 }
 
+// ---------- 영상 손떨림 보정 (소프트웨어) ----------
+// 프레임마다 작은 흑백 이미지로 이전 프레임 대비 이동량을 구하고, 누적 경로를 부드럽게 만든 뒤
+// 그 차이만큼 화면을 반대로 밀어서 canvas 에 그립니다. 가장자리가 비지 않게 12% 확대합니다.
+function startStabilizer() {
+  const vw = preview.videoWidth, vh = preview.videoHeight;
+  const sc = Math.min(1, 1280 / vw);
+  const W = Math.round(vw * sc), H = Math.round(vh * sc);
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const octx = out.getContext('2d');
+  const SW = 160, SH = Math.max(40, Math.round(SW * vh / vw)), K = W / SW;
+  const small = document.createElement('canvas'); small.width = SW; small.height = SH;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  const R = 8, N = 2 * R + 1, ZOOM = 1.12, A = 0.08;
+  const MAXX = W * (ZOOM - 1) / 2, MAXY = H * (ZOOM - 1) / 2;
+  const sad = new Float32Array(N * N);
+  let prev = null, Cx = 0, Cy = 0, Sx = 0, Sy = 0, running = true;
+
+  const gray = () => {
+    sctx.drawImage(preview, 0, 0, SW, SH);
+    const d = sctx.getImageData(0, 0, SW, SH).data, g = new Uint8Array(SW * SH);
+    for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+    return g;
+  };
+  const sub = (a, b, c) => { const den = a - 2 * b + c; return den > 0 ? Math.max(-0.5, Math.min(0.5, (a - c) / (2 * den))) : 0; };
+  const estimate = (p, c) => {
+    let best = Infinity, bx = 0, by = 0;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      let t = 0;
+      for (let y = R; y < SH - R; y++) {
+        const row = y * SW, prow = (y - dy) * SW - dx;
+        for (let x = R; x < SW - R; x++) t += Math.abs(c[row + x] - p[prow + x]);
+      }
+      sad[(dy + R) * N + dx + R] = t;
+      if (t < best) { best = t; bx = dx; by = dy; }
+    }
+    let fx = bx, fy = by;
+    if (Math.abs(bx) < R) fx += sub(sad[(by + R) * N + bx - 1 + R], best, sad[(by + R) * N + bx + 1 + R]);
+    if (Math.abs(by) < R) fy += sub(sad[(by - 1 + R) * N + bx + R], best, sad[(by + 1 + R) * N + bx + R]);
+    return [fx, fy];
+  };
+  const frame = () => {
+    if (!running) return;
+    if (preview.videoWidth) {
+      const g = gray();
+      if (prev) { const [dx, dy] = estimate(prev, g); Cx += dx * K; Cy += dy * K; }
+      prev = g;
+      Sx += A * (Cx - Sx); Sy += A * (Cy - Sy);
+      let tx = Sx - Cx, ty = Sy - Cy;
+      const cx = Math.max(-MAXX, Math.min(MAXX, tx)), cy = Math.max(-MAXY, Math.min(MAXY, ty));
+      if (cx !== tx) Sx = Cx + cx; // 보정 한계를 넘으면 경로를 따라감 (큰 이동은 의도한 움직임)
+      if (cy !== ty) Sy = Cy + cy;
+      octx.setTransform(ZOOM, 0, 0, ZOOM, W / 2 * (1 - ZOOM) + cx, H / 2 * (1 - ZOOM) + cy);
+      octx.drawImage(preview, 0, 0, W, H);
+    }
+    schedule();
+  };
+  const schedule = () => preview.requestVideoFrameCallback ? preview.requestVideoFrameCallback(frame) : requestAnimationFrame(frame);
+  schedule();
+  const track = out.captureStream(30).getVideoTracks()[0];
+  return { track, stop() { running = false; track.stop(); } };
+}
+
 // ---------- 영상 촬영 ----------
 async function toggleRecord() {
   if (recorder) return stopRecord();
   if (!stream) return;
   let tracks = [...stream.getVideoTracks()];
+  if (stab && HTMLCanvasElement.prototype.captureStream && preview.videoWidth) {
+    try { stabilizer = startStabilizer(); tracks = [stabilizer.track]; } catch (e) { stabilizer = null; }
+  }
   try { // 소리는 마이크 허용 시에만 녹음
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     tracks.push(...micStream.getAudioTracks());
   } catch (e) { micStream = null; }
   const types = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
   const mime = window.MediaRecorder && types.find(t => MediaRecorder.isTypeSupported(t));
-  if (!mime) { alert('이 브라우저는 영상 촬영을 지원하지 않습니다.'); return; }
+  if (!mime) {
+    if (stabilizer) { stabilizer.stop(); stabilizer = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    alert('이 브라우저는 영상 촬영을 지원하지 않습니다.'); return;
+  }
   recChunks = [];
   recorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime });
   recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
   recorder.onstop = async () => {
+    if (stabilizer) { stabilizer.stop(); stabilizer = null; }
     const blob = new Blob(recChunks, { type: mime.split(';')[0] });
     recorder = null;
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
@@ -222,10 +293,12 @@ $('shutter').onclick = shoot;
 $('recBtn').onclick = toggleRecord;
 $('stealthBtn').onclick = enterStealth;
 function paintToggles() {
+  $('stabBtn').classList.toggle('off', !stab);
   $('hideBtn').classList.toggle('off', !hideRec);
   $('saveBtn').classList.toggle('off', !autoSave || !!native);
   $('saveBtn').hidden = !!native; // 앱은 갤러리에 자동 저장되므로 필요 없음
 }
+$('stabBtn').onclick = () => { if (recorder) return; stab = !stab; store.set('stab', stab); paintToggles(); };
 $('hideBtn').onclick = () => { hideRec = !hideRec; store.set('hideRec', hideRec); paintToggles(); };
 $('saveBtn').onclick = () => { autoSave = !autoSave; store.set('autoSave', autoSave); paintToggles(); };
 paintToggles();
