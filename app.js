@@ -6,6 +6,14 @@ let recorder = null, recChunks = [], recStart = 0, recTick = null, micStream = n
 let wakeLock = null;
 const native = window.AndroidBridge; // 안드로이드 앱(APK)에서만 존재
 
+// ---------- 설정 (이 기기에 기억) ----------
+const store = {
+  get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === '1'; } catch (e) { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch (e) {} }
+};
+let hideRec = store.get('hideRec', false);   // 촬영 중 표시(빨간 시간/버튼 변화) 숨기기
+let autoSave = store.get('autoSave', true);  // 촬영 즉시 기기에 파일로 저장(다운로드)
+
 // ---------- 저장소 (IndexedDB) ----------
 const dbReady = new Promise((res, rej) => {
   const r = indexedDB.open('silent-camera', 1);
@@ -24,8 +32,19 @@ const tx = async (mode, fn) => {
 };
 const addItem = (blob, type) => {
   if (native) saveNative(blob, type).catch(() => {});
+  else if (autoSave) downloadBlob(blob, type);
   return tx('readwrite', s => s.add({ blob, type, time: Date.now() }));
 };
+// 웹: 촬영 즉시 파일로 내려받아 저장 (안드로이드는 다운로드 폴더, 아이폰은 파일 앱/저장 확인창)
+function downloadBlob(blob, type) {
+  const isPhoto = type === 'photo';
+  const ext = isPhoto ? 'jpg' : ((blob.type || '').includes('mp4') ? 'mp4' : 'webm');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'silent-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + ext;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
 // 앱에서는 촬영물을 기기 갤러리에도 자동 저장
 async function saveNative(blob, type) {
   const ext = type === 'photo' ? 'jpg' : ((blob.type || '').includes('mp4') ? 'mp4' : 'webm');
@@ -100,7 +119,7 @@ async function toggleRecord() {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     tracks.push(...micStream.getAudioTracks());
   } catch (e) { micStream = null; }
-  const types = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  const types = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
   const mime = window.MediaRecorder && types.find(t => MediaRecorder.isTypeSupported(t));
   if (!mime) { alert('이 브라우저는 영상 촬영을 지원하지 않습니다.'); return; }
   recChunks = [];
@@ -115,9 +134,9 @@ async function toggleRecord() {
   };
   recorder.start(1000);
   recStart = Date.now();
-  $('recBtn').classList.add('on');
-  $('badge').classList.add('rec');
+  if (!hideRec) { $('recBtn').classList.add('on'); $('badge').classList.add('rec'); }
   recTick = setInterval(() => {
+    if (hideRec) return;
     const s = Math.floor((Date.now() - recStart) / 1000);
     $('badge').textContent = '● ' + String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
   }, 500);
@@ -202,6 +221,14 @@ function closeViewer() { $('viewerVideo').pause(); $('viewer').hidden = true; }
 $('shutter').onclick = shoot;
 $('recBtn').onclick = toggleRecord;
 $('stealthBtn').onclick = enterStealth;
+function paintToggles() {
+  $('hideBtn').classList.toggle('off', !hideRec);
+  $('saveBtn').classList.toggle('off', !autoSave || !!native);
+  $('saveBtn').hidden = !!native; // 앱은 갤러리에 자동 저장되므로 필요 없음
+}
+$('hideBtn').onclick = () => { hideRec = !hideRec; store.set('hideRec', hideRec); paintToggles(); };
+$('saveBtn').onclick = () => { autoSave = !autoSave; store.set('autoSave', autoSave); paintToggles(); };
+paintToggles();
 $('flipBtn').onclick = () => { if (recorder) return; facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
 $('timerBtn').onclick = () => {
   timer = timer === 0 ? 3 : timer === 3 ? 10 : 0;

@@ -41,3 +41,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #grid video,#grid img{width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:pointer;background:#222}
 #grid .item::after{content:"▶";position:absolute;right:6px;bottom:4px;font-size:14px;text-shadow:0 1px 4px #000;display:none}
 #grid .item.vid::after{display:block}
+
+.tools{display:flex;gap:6px}
+.tools button{padding:8px 10px!important;font-size:16px!important}
+.tools button.off{opacity:.35}
