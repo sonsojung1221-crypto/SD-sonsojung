@@ -13,7 +13,7 @@ const store = {
 };
 let hideRec = store.get('hideRec', false);   // 촬영 중 표시(빨간 시간/버튼 변화) 숨기기
 let stab = store.get('stab', true);          // 영상 손떨림 보정
-let autoSave = store.get('autoSave', true);  // 촬영 즉시 기기에 파일로 저장(다운로드)
+let autoSave = store.get('autoSaveV2', false); // 촬영 즉시 기기에 저장 (기본: 끔, 갤러리에서 '저장'을 눌러야 저장)
 
 // ---------- 저장소 (IndexedDB) ----------
 const dbReady = new Promise((res, rej) => {
@@ -32,8 +32,7 @@ const tx = async (mode, fn) => {
   });
 };
 const addItem = (blob, type, tag = '') => {
-  if (native) saveNative(blob, type, tag).catch(() => {});
-  else if (autoSave) downloadBlob(blob, type, tag);
+  if (autoSave) { if (native) saveNative(blob, type, tag).catch(() => {}); else downloadBlob(blob, type, tag); }
   return tx('readwrite', s => s.add({ blob, type, tag, time: Date.now() }));
 };
 // 웹: 촬영 즉시 파일로 내려받아 저장 (안드로이드는 다운로드 폴더, 아이폰은 파일 앱/저장 확인창)
@@ -312,12 +311,11 @@ $('stealthBtn').onclick = enterStealth;
 function paintToggles() {
   $('stabBtn').classList.toggle('off', !stab);
   $('hideBtn').classList.toggle('off', !hideRec);
-  $('saveBtn').classList.toggle('off', !autoSave || !!native);
-  $('saveBtn').hidden = !!native; // 앱은 갤러리에 자동 저장되므로 필요 없음
+  $('saveBtn').classList.toggle('off', !autoSave);
 }
 $('stabBtn').onclick = () => { if (recorder) return; stab = !stab; store.set('stab', stab); paintToggles(); };
 $('hideBtn').onclick = () => { hideRec = !hideRec; store.set('hideRec', hideRec); paintToggles(); };
-$('saveBtn').onclick = () => { autoSave = !autoSave; store.set('autoSave', autoSave); paintToggles(); };
+$('saveBtn').onclick = () => { autoSave = !autoSave; store.set('autoSaveV2', autoSave); paintToggles(); };
 paintToggles();
 $('flipBtn').onclick = () => { if (recorder) return; facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
 $('timerBtn').onclick = () => {
@@ -339,7 +337,12 @@ window.nativeKey = k => {
   if (!$('gallery').hidden || !$('viewer').hidden) return;
   k === 'up' ? shoot() : toggleRecord();
 };
-if (native) $('viewerSave').hidden = true; // 앱에서는 자동으로 갤러리에 저장됨
+// 앱(APK)에서는 '저장'을 누르면 기기 갤러리에 저장
+$('viewerSave').onclick = e => {
+  if (!native || !current) return;
+  e.preventDefault();
+  saveNative(current.blob, isVideo(current) ? 'video' : 'photo', current.tag || '').then(() => alert('갤러리에 저장했습니다.'));
+};
 // 볼륨 업: 사진 / 볼륨 다운: 영상 (※ 브라우저가 볼륨 키를 전달하는 기기에서만 동작)
 document.addEventListener('keydown', e => {
   const camera = $('gallery').hidden && $('viewer').hidden;
