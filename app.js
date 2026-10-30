@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const preview = $('preview');
 let stream = null, facing = 'environment', timer = 0, busy = false;
-let stabilizer = null, recorder = null, recChunks = [], recStart = 0, recTick = null, micStream = null;
+let stabilizer = null, recorder = null, rawRecorder = null, recStart = 0, recTick = null, micStream = null;
 let wakeLock = null;
 const native = window.AndroidBridge; // 안드로이드 앱(APK)에서만 존재
 
@@ -31,25 +31,25 @@ const tx = async (mode, fn) => {
     t.onerror = () => rej(t.error);
   });
 };
-const addItem = (blob, type) => {
-  if (native) saveNative(blob, type).catch(() => {});
-  else if (autoSave) downloadBlob(blob, type);
-  return tx('readwrite', s => s.add({ blob, type, time: Date.now() }));
+const addItem = (blob, type, tag = '') => {
+  if (native) saveNative(blob, type, tag).catch(() => {});
+  else if (autoSave) downloadBlob(blob, type, tag);
+  return tx('readwrite', s => s.add({ blob, type, tag, time: Date.now() }));
 };
 // 웹: 촬영 즉시 파일로 내려받아 저장 (안드로이드는 다운로드 폴더, 아이폰은 파일 앱/저장 확인창)
-function downloadBlob(blob, type) {
+function downloadBlob(blob, type, tag = '') {
   const isPhoto = type === 'photo';
   const ext = isPhoto ? 'jpg' : ((blob.type || '').includes('mp4') ? 'mp4' : 'webm');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'silent-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + ext;
+  a.download = 'silent-' + new Date().toISOString().replace(/[:.]/g, '-') + (tag === 'original' ? '-original' : '') + '.' + ext;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 // 앱에서는 촬영물을 기기 갤러리에도 자동 저장
-async function saveNative(blob, type) {
+async function saveNative(blob, type, tag = '') {
   const ext = type === 'photo' ? 'jpg' : ((blob.type || '').includes('mp4') ? 'mp4' : 'webm');
-  const name = 'silent-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + ext;
+  const name = 'silent-' + new Date().toISOString().replace(/[:.]/g, '-') + (tag === 'original' ? '-original' : '') + '.' + ext;
   const id = native.saveBegin(name, blob.type || 'image/jpeg', type);
   if (!id) return;
   const CH = 768 * 1024; // 3의 배수 → base64 조각을 독립적으로 디코드 가능
@@ -178,6 +178,7 @@ async function toggleRecord() {
   if (recorder) return stopRecord();
   if (!stream) return;
   let tracks = [...stream.getVideoTracks()];
+  const rawVideo = [...tracks];
   if (stab && HTMLCanvasElement.prototype.captureStream && preview.videoWidth) {
     try { stabilizer = startStabilizer(); tracks = [stabilizer.track]; } catch (e) { stabilizer = null; }
   }
@@ -192,18 +193,23 @@ async function toggleRecord() {
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
     alert('이 브라우저는 영상 촬영을 지원하지 않습니다.'); return;
   }
-  recChunks = [];
-  recorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime });
-  recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
-  recorder.onstop = async () => {
-    if (stabilizer) { stabilizer.stop(); stabilizer = null; }
-    const blob = new Blob(recChunks, { type: mime.split(';')[0] });
-    recorder = null;
-    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-    if (blob.size) await addItem(blob, 'video');
-    await refreshThumb();
+  const makeRecorder = (recTracks, tag) => {
+    const chunks = [];
+    const r = new MediaRecorder(new MediaStream(recTracks), { mimeType: mime });
+    r.ondataavailable = e => e.data.size && chunks.push(e.data);
+    r.onstop = async () => {
+      const blob = new Blob(chunks, { type: mime.split(';')[0] });
+      if (blob.size) await addItem(blob, 'video', tag);
+      await refreshThumb();
+    };
+    return r;
   };
+  const audio = micStream ? micStream.getAudioTracks() : [];
+  recorder = makeRecorder(tracks, stabilizer ? 'stab' : '');
+  // 손떨림 보정이 켜져 있으면 보정 전 원본 영상도 따로 같이 저장
+  rawRecorder = stabilizer ? makeRecorder([...rawVideo, ...audio], 'original') : null;
   recorder.start(1000);
+  if (rawRecorder) rawRecorder.start(1000);
   recStart = Date.now();
   if (!hideRec) { $('recBtn').classList.add('on'); $('badge').classList.add('rec'); }
   recTick = setInterval(() => {
@@ -214,7 +220,18 @@ async function toggleRecord() {
 }
 function stopRecord() {
   if (!recorder) return;
-  recorder.stop();
+  const r = recorder, raw = rawRecorder, st = stabilizer, mic = micStream;
+  recorder = rawRecorder = stabilizer = micStream = null;
+  const finish = () => { // 두 녹화가 모두 마무리된 뒤 자원 정리
+    if (st) st.stop();
+    if (mic) mic.getTracks().forEach(t => t.stop());
+  };
+  let pending = raw ? 2 : 1;
+  const done = () => { if (--pending === 0) finish(); };
+  r.addEventListener('stop', done);
+  if (raw) raw.addEventListener('stop', done);
+  r.stop();
+  if (raw) raw.stop();
   clearInterval(recTick);
   $('recBtn').classList.remove('on');
   $('badge').classList.remove('rec');
@@ -284,7 +301,7 @@ function openViewer(p, u) {
   $('viewerImg').hidden = v; $('viewerVideo').hidden = !v;
   if (v) $('viewerVideo').src = u; else $('viewerImg').src = u;
   const a = $('viewerSave'); a.href = u;
-  a.download = 'silent-' + new Date(p.time).toISOString().replace(/[:.]/g, '-') + '.' + extOf(p);
+  a.download = 'silent-' + new Date(p.time).toISOString().replace(/[:.]/g, '-') + (p.tag === 'original' ? '-original' : '') + '.' + extOf(p);
   $('viewer').hidden = false;
 }
 function closeViewer() { $('viewerVideo').pause(); $('viewer').hidden = true; }
