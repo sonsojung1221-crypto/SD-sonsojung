@@ -1,0 +1,26 @@
+name: Remove APK release
+
+# APK 다운로드 링크(릴리스)와 빌드 산출물(artifact)을 삭제합니다. 이 파일이 푸시되거나 수동 실행하면 동작합니다.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths: ['.github/workflows/remove-apk-release.yml']
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Delete release and its tag
+        run: gh release delete apk-latest --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || echo "no release to delete"
+      - name: Delete build artifacts
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[].id' | while read -r id; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" && echo "deleted artifact $id"
+          done
