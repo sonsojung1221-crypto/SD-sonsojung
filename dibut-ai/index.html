@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>디벗 로컬 AI 챗봇</title>
+<style>
+/*
+VOICE: 실험실 노트처럼 담백하고 친절하게
+IDEA: 기기 안에서 도는 작은 AI 실험 장치
+PICTURE: 대화창 자체가 주인공
+COLOUR: 짙은 남색 바탕 + 민트 강조
+TYPE: 시스템 한글 글꼴, 4단계 크기
+LAYOUT: 상단 설정 카드, 그 아래 대화창, 맨 아래 입력칸
+*/
+:root{--bg:#0f1a24;--panel:#16242f;--line:#24384a;--ink:#e8f0f5;--mute:#8aa3b5;--acc:#3fd4b0;--me:#1f4a5e;--warn:#ffb454;--err:#ff6b6b}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Pretendard","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif}
+.wrap{max-width:820px;margin:0 auto;padding:16px;display:flex;flex-direction:column;min-height:100vh;gap:12px}
+h1{font-size:24px;margin:4px 0 0;line-height:1.2}
+.sub{color:var(--mute);font-size:14px;margin:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+select,button,textarea{font:inherit;font-size:16px;color:var(--ink);background:#0c151d;border:1px solid var(--line);border-radius:10px}
+select{padding:10px;flex:1 1 260px;min-height:44px}
+button{padding:10px 16px;min-height:44px;cursor:pointer}
+button.main{background:var(--acc);color:#05251d;border-color:var(--acc);font-weight:700}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.status{font-size:14px;color:var(--mute);margin-top:10px;white-space:pre-wrap}
+.status.ok{color:var(--acc)}.status.warn{color:var(--warn)}.status.err{color:var(--err)}
+.bar{height:8px;background:#0c151d;border-radius:99px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .3s}
+.opts{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:14px;color:var(--mute)}
+.opts label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.opts input{width:18px;height:18px;accent-color:var(--acc)}
+#chat{flex:1;display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:280px;padding:4px 0}
+.msg{max-width:88%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-break:break-word}
+.me{align-self:flex-end;background:var(--me);border-bottom-right-radius:4px}
+.bot{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px}
+.step{font-size:13px;color:var(--mute);margin-top:6px;border-top:1px dashed var(--line);padding-top:6px}
+.step b{color:var(--acc);font-weight:600}
+.empty{color:var(--mute);text-align:center;margin:auto;font-size:14px;padding:20px}
+.inbar{display:flex;gap:8px;position:sticky;bottom:0;background:var(--bg);padding:8px 0}
+textarea{flex:1;padding:10px;resize:none;height:52px}
+@media(prefers-reduced-motion:reduce){.bar i{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>디벗 로컬 AI 챗봇</h1>
+    <p class="sub">API 없이 이 기기 안에서 AI 모델이 직접 돌아가요. 한국어 질문 → 영어 번역 → 영어로 답변 → 한국어 번역</p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <select id="model" aria-label="모델 선택"></select>
+      <button id="load" class="main">모델 불러오기</button>
+      <button id="diag">연결 진단</button>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div id="status" class="status">기기 확인 중...</div>
+    <div id="diagOut" class="status" hidden></div>
+    <div class="opts">
+      <label><input type="checkbox" id="showSteps" checked> 번역 과정 보기</label>
+      <label><input type="checkbox" id="forceCpu"> GPU 대신 CPU로 실행 (느림)</label>
+    </div>
+  </div>
+
+  <div id="chat"><div class="empty" id="empty">모델을 불러온 뒤 질문해 보세요.<br>처음 한 번은 모델 파일을 내려받아야 해서 시간이 걸려요. 와이파이 연결을 권장해요.</div></div>
+
+  <div class="inbar">
+    <textarea id="input" placeholder="질문을 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)" disabled></textarea>
+    <button id="send" class="main" disabled>보내기</button>
+    <button id="reset" title="대화 초기화" disabled>초기화</button>
+  </div>
+</div>
+
+<script type="module">
+{
+const WEBLLM_URL = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.89/+esm";
+const TJS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
+
+// GPU(WebGPU)용 모델: WebLLM 기본 제공 목록 / CPU용 모델: Transformers.js ONNX
+const MODELS = [
+  {id:"Qwen2.5-0.5B-Instruct", label:"Qwen2.5 0.5B — 가장 가벼움 (약 400MB)", gpu:"Qwen2.5-0.5B-Instruct", cpu:"onnx-community/Qwen2.5-0.5B-Instruct"},
+  {id:"Qwen2.5-1.5B-Instruct", label:"Qwen2.5 1.5B — 추천, 번역이 더 정확 (약 1GB)", gpu:"Qwen2.5-1.5B-Instruct", cpu:"onnx-community/Qwen2.5-1.5B-Instruct"},
+  {id:"Llama-3.2-1B-Instruct", label:"Llama 3.2 1B — 영어 답변이 자연스러움 (약 700MB)", gpu:"Llama-3.2-1B-Instruct", cpu:"onnx-community/Llama-3.2-1B-Instruct-ONNX"},
+];
+
+const $ = id => document.getElementById(id);
+const sel=$("model"), loadBtn=$("load"), statusEl=$("status"), prog=$("prog");
+const chat=$("chat"), input=$("input"), sendBtn=$("send"), resetBtn=$("reset");
+
+sel.innerHTML = MODELS.map((m,i)=>`<option value="${i}" ${i===1?"selected":""}>${m.label}</option>`).join("");
+
+let engine=null;      // {generate(messages,{maxTokens,temperature},onToken)}
+let hasGPU=false, hasF16=false, busy=false;
+let history=[];       // 영어로 된 대화 기록 (모델에게 보내는 것)
+
+const SYSTEM_EN = "You are a friendly, helpful assistant. Answer clearly and concisely in English. Keep answers under 150 words unless asked for more.";
+
+function setStatus(t, cls=""){ statusEl.textContent=t; statusEl.className="status "+cls; }
+function setProg(p){ prog.style.width = Math.max(0,Math.min(100,p*100))+"%"; }
+
+// ---------- 기기 확인 ----------
+async function checkDevice(){
+  if (!("gpu" in navigator)) {
+    setStatus("이 브라우저는 WebGPU를 지원하지 않아요. CPU 모드로 실행돼요 (느릴 수 있어요).\n크롬 최신 버전이면 GPU 모드가 될 수도 있어요.","warn");
+    $("forceCpu").checked=true; $("forceCpu").disabled=true; return;
+  }
+  try{
+    const ad = await navigator.gpu.requestAdapter();
+    if(!ad) throw new Error("no adapter");
+    hasGPU=true; hasF16 = ad.features.has("shader-f16");
+    setStatus(`WebGPU 사용 가능 ✓ (${hasF16?"f16 지원":"f16 미지원 → f32 모델 사용"}) 모델을 골라서 불러오세요.`,"ok");
+  }catch(e){
+    setStatus("WebGPU 장치를 찾지 못했어요. CPU 모드로 실행돼요.","warn");
+    $("forceCpu").checked=true; $("forceCpu").disabled=true;
+  }
+}
+
+// ---------- 엔진: WebLLM (GPU) ----------
+// 저장소(Cache API / IndexedDB)가 쓸 수 있는지 미리 확인
+async function probeStorage(){
+  const r={cache:false, idb:false};
+  try{ const c=await caches.open("probe-test"); await c.put("/probe",new Response("ok")); await caches.delete("probe-test"); r.cache=true; }catch(e){}
+  try{ await new Promise((ok,no)=>{ const q=indexedDB.open("probe-test"); q.onsuccess=()=>{q.result.close(); indexedDB.deleteDatabase("probe-test"); ok();}; q.onerror=()=>no(q.error); }); r.idb=true; }catch(e){}
+  return r;
+}
+
+async function makeWebLLM(m){
+  setStatus("WebLLM 라이브러리 불러오는 중...");
+  const webllm = await import(WEBLLM_URL);
+  const id = `${m.gpu}-${hasF16?"q4f16_1":"q4f32_1"}-MLC`;
+  const st = await probeStorage();
+  const backends = [st.cache&&"cache", st.idb&&"indexeddb"].filter(Boolean);
+  if(!backends.length) throw new Error("STORAGE: 이 페이지에서는 브라우저 저장소를 쓸 수 없어요");
+  let eng, lastErr;
+  for(const b of backends){
+    try{
+      eng = await webllm.CreateMLCEngine(id, {
+        appConfig:{...webllm.prebuiltAppConfig, cacheBackend:b},
+        initProgressCallback: r => { setProg(r.progress||0); setStatus(`[GPU · 저장방식 ${b}] ${id}\n${r.text||""}`); }
+      });
+      break;
+    }catch(e){ lastErr=e; console.warn("backend",b,"failed",e); if(!/cache|storage|quota|security|indexeddb/i.test(String(e?.message||e))) throw e; }
+  }
+  if(!eng) throw lastErr;
+  return {
+    name:"GPU · "+id,
+    async generate(messages,{maxTokens=400,temperature=0.7}={},onToken){
+      const stream = await eng.chat.completions.create({messages, stream:true, temperature, max_tokens:maxTokens});
+      let out="";
+      for await (const ch of stream){ const d=ch.choices[0]?.delta?.content||""; out+=d; onToken&&onToken(out); }
+      return out.trim();
+    }
+  };
+}
+
+// ---------- 엔진: Transformers.js (CPU) ----------
+async function makeTJS(m){
+  setStatus("Transformers.js 라이브러리 불러오는 중...");
+  const T = await import(TJS_URL);
+  const st = await probeStorage();
+  if(!st.cache) T.env.useBrowserCache = false; // 저장 못 하면 매번 새로 받기
+  const files={};
+  const gen = await T.pipeline("text-generation", m.cpu, {
+    dtype:"q4", device:"wasm",
+    progress_callback: p => {
+      if(p.status==="progress" && p.file){ files[p.file]=[p.loaded||0,p.total||0];
+        let a=0,b=0; for(const k in files){a+=files[k][0];b+=files[k][1];}
+        if(b) setProg(a/b);
+        setStatus(`[CPU] ${m.cpu}\n${p.file} 내려받는 중 ${Math.round((p.progress||0))}%`);
+      }
+    }
+  });
+  return {
+    name:"CPU · "+m.cpu,
+    async generate(messages,{maxTokens=400,temperature=0.7}={},onToken){
+      let out="";
+      const streamer = new T.TextStreamer(gen.tokenizer,{skip_prompt:true, skip_special_tokens:true, callback_function:t=>{out+=t; onToken&&onToken(out);}});
+      const opts = {max_new_tokens:maxTokens, streamer};
+      if(temperature>0){opts.do_sample=true; opts.temperature=temperature;} else opts.do_sample=false;
+      const res = await gen(messages, opts);
+      const last = res?.[0]?.generated_text;
+      const txt = Array.isArray(last) ? last.at(-1).content : out;
+      return (txt||out).trim();
+    }
+  };
+}
+
+loadBtn.addEventListener("click", async ()=>{
+  const m = MODELS[+sel.value];
+  loadBtn.disabled=true; sel.disabled=true; setProg(0);
+  try{
+    const useCpu = $("forceCpu").checked || !hasGPU;
+    engine = useCpu ? await makeTJS(m) : await makeWebLLM(m);
+    setProg(1);
+    setStatus(`준비 완료 ✓ ${engine.name}\n이제 질문해 보세요. (다음부터는 저장된 모델을 바로 써요)`,"ok");
+    input.disabled=false; sendBtn.disabled=false; resetBtn.disabled=false; input.focus();
+  }catch(e){
+    console.error(e);
+    setStatus("모델을 불러오지 못했어요.\n오류 내용: "+(e?.message||e)+"\n\n→ '연결 진단' 버튼을 눌러서 ✗ 표시된 항목을 확인하세요.\n· 저장 공간/메모리 부족이면 더 작은 모델(0.5B)\n· GPU에서 실패했다면 'CPU로 실행' 체크 후 다시 시도","err");
+    loadBtn.disabled=false; sel.disabled=false;
+  }
+});
+
+// ---------- 연결 진단 ----------
+$("diag").addEventListener("click", async ()=>{
+  const out=$("diagOut"); out.hidden=false; out.className="status"; out.textContent="진단 중...";
+  const lines=[];
+  lines.push(`페이지 주소 방식: ${location.protocol} ${location.protocol==="file:"?"(파일로 직접 열림 → 저장 문제 가능)":"✓"}`);
+  lines.push(`WebGPU: ${hasGPU?"✓ 사용 가능":"✗ 없음 (CPU 모드)"}`);
+  const st=await probeStorage();
+  lines.push(`브라우저 저장소: Cache ${st.cache?"✓":"✗"} / IndexedDB ${st.idb?"✓":"✗"}`);
+  try{ const e=await navigator.storage?.estimate?.(); if(e) lines.push(`남은 저장 공간: 약 ${((e.quota-e.usage)/1e9).toFixed(1)}GB`); }catch(e){}
+  const tests=[
+    ["라이브러리 (cdn.jsdelivr.net)", WEBLLM_URL],
+    ["모델 정보 (huggingface.co/api)", "https://huggingface.co/api/models/mlc-ai/Qwen2.5-0.5B-Instruct-q4f16_1-MLC"],
+    ["모델 설정 파일 (huggingface.co/resolve)", "https://huggingface.co/mlc-ai/Qwen2.5-0.5B-Instruct-q4f16_1-MLC/resolve/main/mlc-chat-config.json"],
+    ["모델 본체 (cdn.hf.co)", "https://huggingface.co/mlc-ai/Qwen2.5-0.5B-Instruct-q4f16_1-MLC/resolve/main/tokenizer.json"],
+    ["GPU 실행 파일 (raw.githubusercontent.com)", "https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/README.md"],
+  ];
+  for(const [name,url] of tests){
+    const ac=new AbortController(); const tm=setTimeout(()=>ac.abort(),15000);
+    try{ const r=await fetch(url,{cache:"no-store",signal:ac.signal}); lines.push(`${name}: ${r.ok?"✓ 연결됨":"✗ 응답 "+r.status}${r.redirected?" (→ "+new URL(r.url).host+")":""}`); }
+    catch(e){ lines.push(`${name}: ✗ ${e.name==="AbortError"?"15초 시간 초과":(e.name+": "+e.message)}`); }
+    clearTimeout(tm);
+  }
+  lines.push("", "브라우저: "+navigator.userAgent);
+  out.textContent=lines.join("\n");
+});
+
+// ---------- 번역 ----------
+const hasKorean = s => /[가-힣]/.test(s);
+
+async function translate(text, from, to, onToken){
+  const sys = `You are a professional translator. Translate the user's ${from} text into natural ${to}. Output ONLY the ${to} translation. Do not answer questions, do not explain, do not add anything.`;
+  const out = await engine.generate([{role:"system",content:sys},{role:"user",content:text}], {maxTokens:500, temperature:0}, onToken);
+  return out.replace(/^["“]|["”]$/g,"").replace(/^(Translation|번역)\s*[:：]\s*/i,"").trim();
+}
+
+// ---------- 화면 ----------
+function addMsg(cls, text){
+  $("empty")?.remove();
+  const d=document.createElement("div"); d.className="msg "+cls;
+  const main=document.createElement("div"); main.textContent=text; d.appendChild(main);
+  chat.appendChild(d); chat.scrollTop=chat.scrollHeight;
+  return {box:d, main};
+}
+function addStep(box, label, text){
+  if(!$("showSteps").checked) return null;
+  const s=document.createElement("div"); s.className="step";
+  const b=document.createElement("b"); b.textContent=label+" ";
+  const t=document.createElement("span"); t.textContent=text;
+  s.append(b,t); box.appendChild(s); return t;
+}
+
+async function send(){
+  const q=input.value.trim();
+  if(!q||busy||!engine) return;
+  busy=true; sendBtn.disabled=true; input.value="";
+  const mine = addMsg("me", q);
+  const bot = addMsg("bot","1/3 질문을 영어로 번역하는 중...");
+  try{
+    // 1) 한 → 영
+    let qEn=q;
+    if(hasKorean(q)){
+      const st = addStep(mine.box,"영어로 번역:","...");
+      qEn = await translate(q,"Korean","English", t=>{ if(st) st.textContent=t; });
+      if(st) st.textContent=qEn;
+    }
+    // 2) 영어로 답변
+    bot.main.textContent="2/3 영어로 답변 생각하는 중...";
+    const stEn = addStep(bot.box,"영어 원문 답변:","...");
+    history.push({role:"user",content:qEn});
+    const msgs=[{role:"system",content:SYSTEM_EN}, ...history.slice(-8)];
+    const aEn = await engine.generate(msgs,{maxTokens:400,temperature:0.7}, t=>{ if(stEn) stEn.textContent=t; chat.scrollTop=chat.scrollHeight; });
+    history.push({role:"assistant",content:aEn});
+    if(stEn) stEn.textContent=aEn;
+    // 3) 영 → 한
+    bot.main.textContent="3/3 한국어로 번역하는 중...";
+    const aKo = await translate(aEn,"English","Korean", t=>{ bot.main.textContent=t; chat.scrollTop=chat.scrollHeight; });
+    bot.main.textContent=aKo||aEn;
+  }catch(e){
+    console.error(e);
+    bot.main.textContent="오류가 났어요: "+(e?.message||e);
+  }
+  busy=false; sendBtn.disabled=false; input.focus();
+  chat.scrollTop=chat.scrollHeight;
+}
+
+sendBtn.addEventListener("click", send);
+input.addEventListener("keydown", e=>{ if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); send(); }});
+resetBtn.addEventListener("click", ()=>{
+  if(busy) return; history=[];
+  chat.innerHTML='<div class="empty" id="empty">대화를 초기화했어요. 새로 질문해 보세요.</div>';
+});
+
+checkDevice();
+}
+</script>
+</body>
+</html>
