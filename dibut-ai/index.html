@@ -118,6 +118,8 @@ $("showHeavy").checked = !isMobile;
 $("showHeavy").addEventListener("change", ()=>{
   if($("showHeavy").checked && isMobile) setStatus("⚠️ 무거운 모델은 아이패드에서 메모리가 부족하면 브라우저나 기기가 꺼질 수 있어요. 다른 앱·탭을 모두 닫고 시도하세요.","warn");
   renderModels();
+if(isMobile) sel.value = String(MODELS.findIndex(m=>m.gpu==="SmolLM2-360M-Instruct"));
+let crashedWith=null; try{ crashedWith=localStorage.getItem("dibutLoading"); localStorage.removeItem("dibutLoading"); }catch(e){}
 });
 renderModels();
 
@@ -143,6 +145,7 @@ async function checkDevice(){
     if(!ad) throw new Error("no adapter");
     hasGPU=true; hasF16 = ad.features.has("shader-f16");
     setStatus(`WebGPU 사용 가능 ✓ (${hasF16?"f16 지원":"f16 미지원 → f32 모델 사용"}) 모델을 골라서 불러오세요.`,"ok");
+    if(crashedWith) setStatus(`⚠️ 지난번에 '${crashedWith}'을(를) 불러오다가 페이지가 꺼졌어요 (메모리 부족).\n더 작은 모델(SmolLM2 360M)을 쓰거나, 'GPU 대신 CPU로 실행'을 체크하고 Qwen2.5 0.5B로 해보세요.`,"warn");
   }catch(e){
     setStatus("WebGPU 장치를 찾지 못했어요. CPU 모드로 실행돼요.","warn");
     $("forceCpu").checked=true; $("forceCpu").disabled=true;
@@ -232,16 +235,19 @@ loadBtn.addEventListener("click", async ()=>{
   const m = MODELS[+sel.value];
   loadBtn.disabled=true; sel.disabled=true; setProg(0);
   if(engine){ setStatus("이전 모델을 메모리에서 내리는 중..."); await engine.unload?.(); engine=null; history=[]; }
+  try{ localStorage.setItem("dibutLoading", m.label); }catch(e){}
   try{
     const useCpu = $("forceCpu").checked || !hasGPU;
     if(useCpu && !m.cpu) throw new Error("이 모델은 GPU 모드에서만 돼요. CPU 모드에서는 Qwen2.5/Llama 3.2를 고르세요.");
     engine = useCpu ? await makeTJS(m) : await makeWebLLM(m);
     setProg(1);
+    try{ localStorage.removeItem("dibutLoading"); }catch(e){}
     setStatus(`준비 완료 ✓ ${engine.name}\n이제 질문해 보세요. (다음부터는 저장된 모델을 바로 써요)`,"ok");
     input.disabled=false; sendBtn.disabled=false; resetBtn.disabled=false; input.focus();
   }catch(e){
     console.error(e);
     setStatus("모델을 불러오지 못했어요.\n오류 내용: "+(e?.message||e)+"\n\n→ '연결 진단' 버튼을 눌러서 ✗ 표시된 항목을 확인하세요.\n· 저장 공간/메모리 부족이면 더 작은 모델(0.5B)\n· GPU에서 실패했다면 'CPU로 실행' 체크 후 다시 시도","err");
+    try{ localStorage.removeItem("dibutLoading"); }catch(e){}
     loadBtn.disabled=false; sel.disabled=false;
   }
 });
