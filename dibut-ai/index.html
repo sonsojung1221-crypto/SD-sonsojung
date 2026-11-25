@@ -68,6 +68,7 @@ textarea{flex:1;padding:10px;resize:none;height:52px}
     <div class="opts">
       <label><input type="checkbox" id="showSteps" checked> 번역 과정 보기</label>
       <label><input type="checkbox" id="forceCpu"> GPU 대신 CPU로 실행 (느림)</label>
+      <label><input type="checkbox" id="showHeavy"> 무거운 모델도 보기 (1GB 이상)</label>
     </div>
   </div>
 
@@ -90,13 +91,13 @@ const TJS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
 // cpu는 CPU 모드용 Transformers.js 모델 (없으면 null → GPU에서만 실행)
 const MODELS = [
   {label:"Qwen2.5 0.5B — 가장 가벼움 (약 400MB)", gpu:"Qwen2.5-0.5B-Instruct", cpu:"onnx-community/Qwen2.5-0.5B-Instruct"},
-  {label:"Qwen2.5 1.5B — 번역이 더 정확 (약 1GB)", gpu:"Qwen2.5-1.5B-Instruct", cpu:"onnx-community/Qwen2.5-1.5B-Instruct"},
+  {label:"Qwen2.5 1.5B — 번역이 더 정확 (약 1GB)", gpu:"Qwen2.5-1.5B-Instruct", cpu:"onnx-community/Qwen2.5-1.5B-Instruct", heavy:true},
   {label:"Llama 3.2 1B — 영어 답변이 자연스러움 (약 700MB)", gpu:"Llama-3.2-1B-Instruct", cpu:"onnx-community/Llama-3.2-1B-Instruct-ONNX"},
   {label:"Qwen3 0.6B — 최신 소형 (약 500MB)", gpu:"Qwen3-0.6B", cpu:null, think:true},
-  {label:"Qwen3 1.7B — 최신, 한국어 좋음 (약 1.2GB)", gpu:"Qwen3-1.7B", cpu:null, think:true},
+  {label:"Qwen3 1.7B — 최신, 한국어 좋음 (약 1.2GB)", gpu:"Qwen3-1.7B", cpu:null, think:true, heavy:true},
   {label:"SmolLM2 360M — 초경량 테스트용 (약 250MB)", gpu:"SmolLM2-360M-Instruct", cpu:null},
-  {label:"Gemma 2 2B — 구글, 대화 잘함 (약 1.5GB)", gpu:"gemma-2-2b-it", cpu:null},
-  {label:"Phi-3.5 mini — MS, 똑똑하지만 무거움 (약 2.2GB)", gpu:"Phi-3.5-mini-instruct", cpu:null},
+  {label:"Gemma 2 2B — 구글, 대화 잘함 (약 1.5GB)", gpu:"gemma-2-2b-it", cpu:null, heavy:true},
+  {label:"Phi-3.5 mini — MS, 똑똑하지만 무거움 (약 2.2GB)", gpu:"Phi-3.5-mini-instruct", cpu:null, heavy:true},
   {label:"직접 입력 (WebLLM 모델 ID)", gpu:"__custom__", cpu:null},
 ];
 
@@ -104,7 +105,21 @@ const $ = id => document.getElementById(id);
 const sel=$("model"), loadBtn=$("load"), statusEl=$("status"), prog=$("prog");
 const chat=$("chat"), input=$("input"), sendBtn=$("send"), resetBtn=$("reset");
 
-sel.innerHTML = MODELS.map((m,i)=>`<option value="${i}" ${i===0?"selected":""}>${m.label}</option>`).join("");
+// 아이패드·태블릿은 메모리가 작아서 무거운 모델은 기본으로 숨김
+const isMobile = /iPad|iPhone|Android|Mobile/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+function renderModels(){
+  const showHeavy = $("showHeavy").checked;
+  const cur = sel.value;
+  sel.innerHTML = MODELS.map((m,i)=> (m.heavy && !showHeavy) ? "" : `<option value="${i}">${m.heavy?"⚠️ ":""}${m.label}</option>`).join("");
+  if([...sel.options].some(o=>o.value===cur)) sel.value=cur;
+  $("customId").hidden = MODELS[+sel.value].gpu!=="__custom__";
+}
+$("showHeavy").checked = !isMobile;
+$("showHeavy").addEventListener("change", ()=>{
+  if($("showHeavy").checked && isMobile) setStatus("⚠️ 무거운 모델은 아이패드에서 메모리가 부족하면 브라우저나 기기가 꺼질 수 있어요. 다른 앱·탭을 모두 닫고 시도하세요.","warn");
+  renderModels();
+});
+renderModels();
 
 sel.addEventListener("change",()=>{ $("customId").hidden = MODELS[+sel.value].gpu!=="__custom__"; });
 
@@ -162,7 +177,7 @@ async function makeWebLLM(m){
       eng = await webllm.CreateMLCEngine(id, {
         appConfig:{...webllm.prebuiltAppConfig, cacheBackend:b},
         initProgressCallback: r => { setProg(r.progress||0); setStatus(`[GPU · 저장방식 ${b}] ${id}\n${r.text||""}`); }
-      });
+      }, {context_window_size: isMobile ? 1024 : 4096}); // 대화 기억 길이를 줄이면 메모리를 덜 씀
       break;
     }catch(e){ lastErr=e; console.warn("backend",b,"failed",e); if(!/cache|storage|quota|security|indexeddb/i.test(String(e?.message||e))) throw e; }
   }
@@ -300,7 +315,7 @@ async function send(){
     bot.main.textContent="2/3 영어로 답변 생각하는 중...";
     const stEn = addStep(bot.box,"영어 원문 답변:","...");
     history.push({role:"user",content:qEn});
-    const msgs=[{role:"system",content:SYSTEM_EN}, ...history.slice(-8)];
+    const msgs=[{role:"system",content:SYSTEM_EN}, ...history.slice(isMobile?-4:-8)];
     const aEn = await engine.generate(msgs,{maxTokens:400,temperature:0.7}, t=>{ if(stEn) stEn.textContent=t; chat.scrollTop=chat.scrollHeight; });
     history.push({role:"assistant",content:aEn});
     if(stEn) stEn.textContent=aEn;
