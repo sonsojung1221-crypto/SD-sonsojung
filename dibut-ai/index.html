@@ -59,6 +59,7 @@ textarea{flex:1;padding:10px;resize:none;height:52px}
       <button id="load" class="main">모델 불러오기</button>
       <button id="diag">연결 진단</button>
       <button id="wipe">저장된 모델 지우기</button>
+      <button id="wipe">저장된 모델 지우기</button>
     </div>
     <div class="bar"><i id="prog"></i></div>
     <div id="status" class="status">기기 확인 중...</div>
@@ -208,6 +209,24 @@ loadBtn.addEventListener("click", async ()=>{
     setStatus("모델을 불러오지 못했어요.\n오류 내용: "+(e?.message||e)+"\n\n→ '연결 진단' 버튼을 눌러서 ✗ 표시된 항목을 확인하세요.\n· 저장 공간/메모리 부족이면 더 작은 모델(0.5B)\n· GPU에서 실패했다면 'CPU로 실행' 체크 후 다시 시도","err");
     loadBtn.disabled=false; sel.disabled=false;
   }
+});
+
+// ---------- 저장된 모델 지우기 ----------
+$("wipe").addEventListener("click", async ()=>{
+  const out=$("diagOut"); out.hidden=false; out.className="status";
+  if(busy){ out.textContent="답변 중에는 지울 수 없어요."; return; }
+  out.textContent="지우는 중...";
+  let n=0;
+  try{ for(const k of await caches.keys()){ if(/webllm|transformers/i.test(k)){ await caches.delete(k); n++; } } }catch(e){}
+  try{
+    const dbs = indexedDB.databases ? await indexedDB.databases() : [];
+    for(const d of dbs){ if(d.name && /webllm|transformers/i.test(d.name)){ await new Promise(r=>{const q=indexedDB.deleteDatabase(d.name); q.onsuccess=q.onerror=q.onblocked=()=>r();}); n++; } }
+  }catch(e){}
+  engine=null; history=[];
+  input.disabled=true; sendBtn.disabled=true; resetBtn.disabled=true;
+  loadBtn.disabled=false; sel.disabled=false; setProg(0);
+  setStatus("저장된 모델을 지웠어요. 다시 불러오려면 모델을 고르고 '모델 불러오기'를 누르세요.","ok");
+  out.textContent=`지운 저장소 ${n}개. 메모리를 완전히 비우려면 이 탭을 새로고침하세요.`;
 });
 
 // ---------- 연결 진단 ----------
