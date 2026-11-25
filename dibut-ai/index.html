@@ -58,6 +58,7 @@ textarea{flex:1;padding:10px;resize:none;height:52px}
       <select id="model" aria-label="모델 선택"></select>
       <button id="load" class="main">모델 불러오기</button>
       <button id="diag">연결 진단</button>
+      <button id="wipe">저장된 모델 지우기</button>
     </div>
     <div class="bar"><i id="prog"></i></div>
     <div id="status" class="status">기기 확인 중...</div>
@@ -150,6 +151,7 @@ async function makeWebLLM(m){
   if(!eng) throw lastErr;
   return {
     name:"GPU · "+id,
+    async unload(){ try{ await eng.unload(); }catch(e){} },
     async generate(messages,{maxTokens=400,temperature=0.7}={},onToken){
       const stream = await eng.chat.completions.create({messages, stream:true, temperature, max_tokens:maxTokens});
       let out="";
@@ -178,6 +180,7 @@ async function makeTJS(m){
   });
   return {
     name:"CPU · "+m.cpu,
+    async unload(){ try{ await gen.dispose(); }catch(e){} },
     async generate(messages,{maxTokens=400,temperature=0.7}={},onToken){
       let out="";
       const streamer = new T.TextStreamer(gen.tokenizer,{skip_prompt:true, skip_special_tokens:true, callback_function:t=>{out+=t; onToken&&onToken(out);}});
@@ -297,6 +300,26 @@ input.addEventListener("keydown", e=>{ if(e.key==="Enter"&&!e.shiftKey&&!e.isCom
 resetBtn.addEventListener("click", ()=>{
   if(busy) return; history=[];
   chat.innerHTML='<div class="empty" id="empty">대화를 초기화했어요. 새로 질문해 보세요.</div>';
+});
+
+// ---------- 저장된 모델 지우기 (챗봇 것만, 카메라 앱 데이터는 그대로) ----------
+const wipeBtn=$("wipe"); let wipeArm=false, wipeTimer=null;
+wipeBtn.addEventListener("click", async ()=>{
+  if(busy) return;
+  if(!wipeArm){ wipeArm=true; wipeBtn.textContent="한 번 더 누르면 삭제"; clearTimeout(wipeTimer); wipeTimer=setTimeout(()=>{wipeArm=false; wipeBtn.textContent="저장된 모델 지우기";},4000); return; }
+  wipeArm=false; clearTimeout(wipeTimer); wipeBtn.textContent="지우는 중..."; wipeBtn.disabled=true;
+  const isAI = n => /webllm|transformers|onnx|mlc|tvmjs/i.test(n);
+  let removed=[];
+  try{ if(engine){ await engine.unload(); engine=null; } }catch(e){}
+  try{ for(const k of await caches.keys()) if(isAI(k) && await caches.delete(k)) removed.push(k); }catch(e){}
+  try{
+    if(indexedDB.databases){ for(const d of await indexedDB.databases()) if(d.name && isAI(d.name)){ indexedDB.deleteDatabase(d.name); removed.push(d.name); } }
+  }catch(e){}
+  let free=""; try{ const e=await navigator.storage.estimate(); free=` / 남은 공간 약 ${((e.quota-e.usage)/1e9).toFixed(1)}GB`; }catch(e){}
+  history=[]; input.disabled=true; sendBtn.disabled=true; resetBtn.disabled=true;
+  loadBtn.disabled=false; sel.disabled=false; setProg(0);
+  setStatus(removed.length?`저장된 모델을 지웠어요 ✓ (${removed.length}개 저장소${free})\n페이지를 새로고침한 뒤 다시 불러오세요.`:`지울 모델이 없어요${free}`, "ok");
+  wipeBtn.textContent="저장된 모델 지우기"; wipeBtn.disabled=false;
 });
 
 checkDevice();
